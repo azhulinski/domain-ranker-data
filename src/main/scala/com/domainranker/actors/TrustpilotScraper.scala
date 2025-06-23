@@ -12,7 +12,7 @@ import java.time.Instant
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContextExecutor, Future}
 import scala.jdk.CollectionConverters._
-import scala.util.{Failure, Success, Try}
+import scala.util.{Failure, Random, Success, Try}
 
 object TrustpilotScraper {
   sealed trait Command
@@ -30,19 +30,15 @@ object TrustpilotScraper {
     val trustpilotBaseUrl = "https://www.trustpilot.com"
     val categoriesUrl = s"$trustpilotBaseUrl/categories"
 
-
     Behaviors.receiveMessage {
       case ScrapeAllCategoryLinks(replyTo) =>
-        context.log.info("Starting to scrape all Trustpilot category links")
 
-        // First fetch the categories page to extract all category links
         val categoriesFuture = Http().singleRequest(HttpRequest(uri = categoriesUrl))
           .flatMap(_.entity.toStrict(10.seconds))
           .map(_.data.utf8String)
           .map { html =>
             Try {
               val doc = Jsoup.parse(html)
-              // Extract all category links with href="/categories/something"
               val categoryLinks = doc.select("a[href^=/categories/]").asScala
                 .map(_.attr("href"))
                 .filter(_.startsWith("/categories/"))
@@ -50,21 +46,17 @@ object TrustpilotScraper {
                 .filter(_.nonEmpty)
                 .toList
 
-              //              context.log.info(s"Found ${categoryLinks.size} category links")
-              categoryLinks
+              Random.shuffle(categoryLinks).take(5)
             }.getOrElse(List.empty[String])
           }
           .recover {
-            case e: Exception =>
-              //              context.log.error(s"Failed to fetch categories: ${e.getMessage}")
+            case _: Exception =>
               List.empty[String]
           }
 
-        // Then for each category, fetch the latest reviews
         categoriesFuture.flatMap { categories =>
           val allReviews = Source(categories)
             .mapAsync(1) { category =>
-              // Sort by latest reviews
               val latestReviewsUrl = s"$trustpilotBaseUrl/categories/$category?sort=latest_review"
 
               Http().singleRequest(HttpRequest(uri = latestReviewsUrl))
@@ -73,16 +65,14 @@ object TrustpilotScraper {
                 .map { html =>
                   Try {
                     val doc = Jsoup.parse(html)
-                    // Get all business cards/listings
+
                     val businessCards = doc.select(".styles_card__8oW3J").asScala.toList
 
-                    // For each business, extract domain and get latest reviews
                     val reviewFutures = businessCards.map { card =>
                       val businessUrl = card.select("a[href^=/review]").attr("href")
                       val domain = extractDomain(businessUrl)
 
                       if (domain.nonEmpty) {
-                        // Get the latest reviews for this domain
                         val reviewsUrl = s"$trustpilotBaseUrl/review/$domain"
 
                         Http().singleRequest(HttpRequest(uri = reviewsUrl))
@@ -111,8 +101,7 @@ object TrustpilotScraper {
                             }.getOrElse(List.empty[TrustpilotReview])
                           }
                           .recover {
-                            case e: Exception =>
-                              //                              context.log.error(s"Failed to fetch reviews for $domain: ${e.getMessage}")
+                            case _: Exception =>
                               List.empty[TrustpilotReview]
                           }
                       } else {
@@ -124,8 +113,7 @@ object TrustpilotScraper {
                   }.getOrElse(Future.successful(List.empty[TrustpilotReview]))
                 }
                 .recover {
-                  case e: Exception =>
-                    //                    context.log.error(s"Failed to process category $category: ${e.getMessage}")
+                  case _: Exception =>
                     Future.successful(List.empty[TrustpilotReview])
                 }
                 .flatten
@@ -143,12 +131,10 @@ object TrustpilotScraper {
         Behaviors.same
 
       case ScrapingResult(reviews, replyTo) =>
-        //        context.log.info(s"Scraped ${reviews.size} reviews in total.")
         replyTo ! reviews
         Behaviors.same
 
-      case ScrapingFailure(error, replyTo) =>
-        //        context.log.error(s"Failed to scrape all categories: ${error.getMessage}")
+      case ScrapingFailure(_, replyTo) =>
         replyTo ! List.empty[TrustpilotReview]
         Behaviors.same
     }

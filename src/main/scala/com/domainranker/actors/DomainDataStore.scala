@@ -36,7 +36,7 @@ object DomainDataStore {
         reviewsByDomain.foreach { case (domain, domainReviews) =>
           val current = domainStates.getOrElseUpdate(
             domain, 
-            DomainState(None, None, MSet.empty, 0, None)
+            DomainState(None, None, MSet.empty[TrustpilotReview], 0, None)
           )
 
           val newTotalCount = current.totalReviewCount + domainReviews.size
@@ -84,12 +84,24 @@ object DomainDataStore {
 
       case AddTrafficData(trafficData) =>
         context.log.info(s"Adding ${trafficData.size} traffic entries to data store.")
+        
+        // Process traffic data separately from reviews to avoid type conflicts
         trafficData.foreach { data =>
-          val current = domainStates.getOrElseUpdate(
-            data.domain, 
-            DomainState(None, None, MSet.empty, 0, None)
-          )
-          domainStates.update(data.domain, current.copy(traffic = Some(data.traffic)))
+          // Explicit type declaration to avoid potential confusion
+          val domainName: String = data.domain
+          val trafficValue: Long = data.traffic
+          
+          val current = domainStates.get(domainName) match {
+            case Some(state) => 
+              // Update existing state with traffic data
+              domainStates.update(domainName, state.copy(traffic = Some(trafficValue)))
+            case None =>
+              // Create new state with only traffic data
+              domainStates.put(
+                domainName, 
+                DomainState(None, None, MSet.empty[TrustpilotReview], 0, Some(trafficValue))
+              )
+          }
         }
         Behaviors.same
 
