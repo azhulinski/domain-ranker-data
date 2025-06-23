@@ -12,7 +12,7 @@ import java.time.Instant
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContextExecutor, Future}
 import scala.jdk.CollectionConverters._
-import scala.util.{Failure, Random, Success, Try}
+import scala.util.{Failure, Success, Try}
 
 object TrustpilotScraper {
   sealed trait Command
@@ -46,7 +46,7 @@ object TrustpilotScraper {
                 .filter(_.nonEmpty)
                 .toList
 
-              Random.shuffle(categoryLinks).take(5)
+              categoryLinks
             }.getOrElse(List.empty[String])
           }
           .recover {
