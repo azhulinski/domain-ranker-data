@@ -16,7 +16,10 @@ lazy val domainRanker = project
       "com.typesafe.play" %% "play-json" % "2.9.4",
       "com.typesafe.akka" %% "akka-actor-testkit-typed" % AkkaVersion % Test,
       "org.scalatest" %% "scalatest" % "3.2.19" % Test,
-      "ch.qos.logback" % "logback-classic" % "1.5.18"
+      "ch.qos.logback" % "logback-classic" % "1.5.18",
+      "org.slf4j" % "slf4j-api" % "1.7.36",
+      "ch.qos.logback" % "logback-classic" % "1.2.11"
+
     ),
     scalacOptions ++= Seq(
       "-encoding", "UTF-8",
@@ -27,5 +30,12 @@ lazy val domainRanker = project
       "-Ywarn-dead-code",
       "-Ywarn-numeric-widen",
       "-Xlint"
-    )
+    ),
+    // Add assembly plugin configuration
+    assembly / assemblyJarName := "DomainRankerData-assembly.jar",
+    assembly / assemblyMergeStrategy := {
+      case PathList("META-INF", xs @ _*) => MergeStrategy.discard
+      case "reference.conf" => MergeStrategy.concat
+      case x => MergeStrategy.first
+    }
   )

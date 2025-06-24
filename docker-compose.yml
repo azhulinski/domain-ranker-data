@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  domainranker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: domainranker:latest
+    container_name: domainranker
+    environment:
+      - domainranker.apis.openai.api-key=${OPENAI_API_KEY}
+      - JAVA_OPTS=-Xms512m -Xmx1g
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
