@@ -9,7 +9,7 @@ services:
     container_name: domainranker
     environment:
       - domainranker.apis.openai.api-key=${OPENAI_API_KEY}
-      - JAVA_OPTS=-Xms512m -Xmx1g
+      - JAVA_OPTS=-Xms512m -Xmx1g -Dlogback.debug=true -Dorg.slf4j.simpleLogger.defaultLogLevel=debug
     volumes:
       - ./data:/app/data
     restart: unless-stopped

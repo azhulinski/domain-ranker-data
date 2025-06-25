@@ -1,5 +1,7 @@
 val AkkaVersion = "2.8.5"
 val AkkaHttpVersion = "10.5.3"
+val Slf4jVersion = "1.7.36"
+val LogbackVersion = "1.2.11"
 
 lazy val domainRanker = project
   .in(file("."))
@@ -16,10 +18,9 @@ lazy val domainRanker = project
       "com.typesafe.play" %% "play-json" % "2.9.4",
       "com.typesafe.akka" %% "akka-actor-testkit-typed" % AkkaVersion % Test,
       "org.scalatest" %% "scalatest" % "3.2.19" % Test,
-      "ch.qos.logback" % "logback-classic" % "1.5.18",
-      "org.slf4j" % "slf4j-api" % "1.7.36",
-      "ch.qos.logback" % "logback-classic" % "1.2.11"
-
+      "org.slf4j" % "slf4j-api" % Slf4jVersion,
+      "ch.qos.logback" % "logback-classic" % LogbackVersion,
+      "ch.qos.logback" % "logback-core" % LogbackVersion
     ),
     scalacOptions ++= Seq(
       "-encoding", "UTF-8",
@@ -31,11 +32,19 @@ lazy val domainRanker = project
       "-Ywarn-numeric-widen",
       "-Xlint"
     ),
-    // Add assembly plugin configuration
+
     assembly / assemblyJarName := "DomainRankerData-assembly.jar",
     assembly / assemblyMergeStrategy := {
-      case PathList("META-INF", xs @ _*) => MergeStrategy.discard
+      case PathList("META-INF", "services", xs@_*) => MergeStrategy.concat
+      case PathList("META-INF", xs@_*) => MergeStrategy.discard
       case "reference.conf" => MergeStrategy.concat
+      case x if x.endsWith(".properties") => MergeStrategy.concat
       case x => MergeStrategy.first
-    }
+    },
+    ThisBuild / conflictManager := ConflictManager.strict,
+    ThisBuild / dependencyOverrides ++= Seq(
+      "org.slf4j" % "slf4j-api" % Slf4jVersion,
+      "ch.qos.logback" % "logback-classic" % LogbackVersion,
+      "ch.qos.logback" % "logback-core" % LogbackVersion
+    )
   )

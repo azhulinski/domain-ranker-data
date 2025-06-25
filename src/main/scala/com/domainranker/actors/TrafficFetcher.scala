@@ -3,25 +3,27 @@ package com.domainranker.actors
 import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.{ActorRef, Behavior}
 import com.domainranker.models.DomainTraffic
+import org.slf4j.{Logger, LoggerFactory}
 
 import java.time.Instant
 import scala.util.Random
 
 object TrafficFetcher {
+  private val logger: Logger = LoggerFactory.getLogger(TrafficFetcher.getClass)
 
   sealed trait Command
 
   case class FetchTraffic(domains: Set[String], replyTo: ActorRef[List[DomainTraffic]]) extends Command
 
   def apply(): Behavior[Command] = {
-    Behaviors.setup { context =>
-      // Random generator for traffic values
+    Behaviors.setup { _ =>
+
       val random = new Random()
       var trafficCache = Map.empty[String, (Long, Instant)]
 
       Behaviors.receiveMessage {
         case FetchTraffic(domains, replyTo) =>
-          context.log.info(s"Generating traffic data for ${domains.size} domains")
+          logger.info(s"Generating traffic data for ${domains.size} domains")
 
           val currentTime = Instant.now()
 

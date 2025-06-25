@@ -32,6 +32,9 @@ USER appuser
 
 ENV JAVA_OPTS="-Xms512m -Xmx1g"
 
+# Add these environment variables
+ENV JAVA_OPTS="$JAVA_OPTS -Dlogback.debug=true -Dorg.slf4j.simpleLogger.defaultLogLevel=debug"
+
 # EXPOSE 8080
 
 CMD ["java", "-Dlogback.configurationFile=/app/logback.xml", "-jar", "/app/domainranker.jar"]

@@ -3,11 +3,14 @@ package com.domainranker.actors
 import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.{ActorRef, Behavior}
 import com.domainranker.models.{DomainSummary, DomainTraffic, TrustpilotReview}
+import org.slf4j.{Logger, LoggerFactory}
 
 import java.time.{Duration, Instant}
 import scala.collection.mutable.{Map => MMap, Set => MSet}
 
 object DomainDataStore {
+  private val logger: Logger = LoggerFactory.getLogger(DomainDataStore.getClass)
+
   sealed trait Command
 
   case class AddReviews(reviews: List[TrustpilotReview]) extends Command
@@ -28,9 +31,8 @@ object DomainDataStore {
 
     Behaviors.receiveMessage {
       case AddReviews(reviews) =>
-        context.log.info(s"Adding ${reviews.size} reviews to data store.")
+        logger.info(s"Adding ${reviews.size} reviews to data store.")
         
-        // Group reviews by domain for more efficient processing
         val reviewsByDomain = reviews.groupBy(_.domain)
         
         reviewsByDomain.foreach { case (domain, domainReviews) =>
@@ -40,11 +42,8 @@ object DomainDataStore {
           )
 
           val newTotalCount = current.totalReviewCount + domainReviews.size
-          
-          // Find newest review for this domain
           val newestReview = domainReviews.maxByOption(_.reviewDate)
           
-          // Update latest review if needed
           val newLatestReview = (current.latestReview, newestReview) match {
             case (Some(existing), Some(newReview)) if newReview.reviewDate.isAfter(existing.reviewDate) => 
               Some(newReview)
@@ -54,10 +53,8 @@ object DomainDataStore {
               current.latestReview
           }
           
-          // Find oldest review to track domain age
           val oldestReview = domainReviews.minByOption(_.reviewDate)
           
-          // Update first review date if needed
           val newFirstReviewDate = (current.firstReviewDate, oldestReview) match {
             case (Some(existing), Some(oldReview)) if oldReview.reviewDate.isBefore(existing) => 
               Some(oldReview.reviewDate)
@@ -67,7 +64,6 @@ object DomainDataStore {
               current.firstReviewDate
           }
           
-          // Add reviews with sentiment scores to recent reviews set
           domainReviews.foreach { review =>
             if (review.sentimentScore.isDefined && !current.recentReviews.exists(_.id == review.id)) {
               current.recentReviews += review
@@ -83,20 +79,18 @@ object DomainDataStore {
         Behaviors.same
 
       case AddTrafficData(trafficData) =>
-        context.log.info(s"Adding ${trafficData.size} traffic entries to data store.")
+        logger.info(s"Adding ${trafficData.size} traffic entries to data store.")
         
-        // Process traffic data separately from reviews to avoid type conflicts
         trafficData.foreach { data =>
-          // Explicit type declaration to avoid potential confusion
           val domainName: String = data.domain
           val trafficValue: Long = data.traffic
           
           val current = domainStates.get(domainName) match {
             case Some(state) => 
-              // Update existing state with traffic data
+              
               domainStates.update(domainName, state.copy(traffic = Some(trafficValue)))
             case None =>
-              // Create new state with only traffic data
+              
               domainStates.put(
                 domainName, 
                 DomainState(None, None, MSet.empty[TrustpilotReview], 0, Some(trafficValue))
@@ -106,24 +100,22 @@ object DomainDataStore {
         Behaviors.same
 
       case GetDomainSummaries(replyTo) =>
-        context.log.info("Generating domain summaries.")
+        logger.info("Generating domain summaries.")
         val now = Instant.now()
         
         val summaries = domainStates.map { case (domain, state) =>
-          // Calculate time-weighted sentiment sum for recent reviews
+          
           val sentimentSumRecent = state.recentReviews.map { review =>
             val daysSinceReview = Duration.between(review.reviewDate, now).toDays
-            val timeWeight = Math.max(0.5, 1.0 - (daysSinceReview / 30.0)) // Reviews within 30 days get higher weight
+            val timeWeight = Math.max(0.5, 1.0 - (daysSinceReview / 30.0))
             
             review.sentimentScore.getOrElse(0.0) * timeWeight
           }.sum
           
-          // Calculate domain age in days (if available)
           val domainAgeInDays = state.firstReviewDate.map { firstDate =>
             Duration.between(firstDate, now).toDays
           }.getOrElse(0L)
           
-          // Create domain summary with age information
           DomainSummary(
             domain = domain,
             latestReview = state.latestReview,
@@ -139,7 +131,7 @@ object DomainDataStore {
         Behaviors.same
 
       case ClearRecentCounts =>
-        context.log.info("Clearing recent review counts.")
+        logger.info("Clearing recent review counts.")
         domainStates.values.foreach(_.recentReviews.clear())
         Behaviors.same
     }

@@ -33,8 +33,6 @@ object Ranker {
               s1.sentimentSumRecentReviews > s2.sentimentSumRecentReviews
             }
           }
-          .take(10)
-
         replyTo ! rankedSummaries
         Behaviors.same
     }

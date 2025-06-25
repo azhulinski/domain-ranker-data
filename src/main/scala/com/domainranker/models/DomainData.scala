@@ -24,6 +24,6 @@ case class DomainSummary(
   totalReviewCount: Int,
   traffic: Option[Long],
   sentimentSumRecentReviews: Double,
-  domainAge: Long = 0,  // Domain age in days
+  domainAge: Long = 0,
   rankScore: Double = 0.0
 )

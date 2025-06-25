@@ -4,10 +4,13 @@ import akka.actor.typed.scaladsl.{ActorContext, Behaviors}
 import akka.actor.typed.{ActorRef, Behavior, SupervisorStrategy}
 import com.domainranker.models.{DomainSummary, DomainTraffic, TrustpilotReview}
 import com.typesafe.config.ConfigFactory
+import org.slf4j.{Logger, LoggerFactory}
 
 import scala.concurrent.duration._
 
 object Scheduler {
+  private val logger: Logger = LoggerFactory.getLogger(Scheduler.getClass)
+
   sealed trait Command
 
   private case object FetchAndRankDomains extends Command
@@ -29,10 +32,15 @@ object Scheduler {
   private case class DataStoreComplete(summaries: List[DomainSummary]) extends Command
 
   def apply(openAiApiKey: String): Behavior[Command] = Behaviors.setup { context =>
+    logger.info("Initializing Domain Ranker Scheduler")
+
     val config = ConfigFactory.load().getConfig("domainranker.scheduling")
 
     val rankingInterval = config.getDuration("ranking-interval").toSeconds.seconds
     val resetInterval = config.getDuration("reset-counts-interval").toSeconds.seconds
+
+    logger.info(s"Configured ranking interval: ${rankingInterval.toSeconds} seconds")
+    logger.info(s"Configured reset interval: ${resetInterval.toSeconds} seconds")
 
     val trustpilotScraper = context.spawn(
       Behaviors.supervise(TrustpilotScraper())
@@ -64,8 +72,10 @@ object Scheduler {
       "domain-data-store"
     )
 
-    Behaviors.withTimers { timers =>
+    logger.info("All actors created, setting up timers")
 
+    Behaviors.withTimers { timers =>
+      logger.info("Starting ranking and reset timers")
       timers.startTimerWithFixedDelay(ScheduleFetchAndRank, FetchAndRankDomains, 0.seconds, rankingInterval)
       timers.startTimerWithFixedDelay(ScheduleResetReviews, ResetRecentReviewCounts, resetInterval, resetInterval)
 
@@ -90,8 +100,8 @@ object Scheduler {
                                ): Behavior[Command] = {
     Behaviors.receiveMessage {
       case FetchAndRankDomains =>
-        context.log.info("===== STARTING NEW DOMAIN RANKING CYCLE =====")
-        context.log.info("Step 1/5: Scraping reviews from Trustpilot...")
+        logger.info("===== STARTING NEW DOMAIN RANKING CYCLE =====")
+        logger.info("Step 1/5: Scraping reviews from Trustpilot...")
 
         val reviewsResponseAdapter: ActorRef[List[TrustpilotReview]] =
           context.messageAdapter(reviews => ScrapedReviews(reviews))
@@ -102,14 +112,13 @@ object Scheduler {
 
       case ScrapedReviews(reviews) =>
         if (reviews.isEmpty) {
-          context.log.warn("No reviews received from scraper! Skipping this ranking cycle.")
+          logger.warn("No reviews received from scraper! Skipping this ranking cycle.")
           Behaviors.same
         } else {
-
           val domains = reviews.map(_.domain).toSet
-          context.log.info(s"✓ Step 1/5 complete: Scraped ${reviews.size} reviews for ${domains.size} domains")
+          logger.info(s"✓ Step 1/5 complete: Scraped ${reviews.size} reviews for ${domains.size} domains")
 
-          context.log.info("Step 2/5: Fetching traffic data...")
+          logger.info("Step 2/5: Fetching traffic data...")
 
           val trafficAdapter: ActorRef[List[DomainTraffic]] =
             context.messageAdapter[List[DomainTraffic]] { trafficList =>
@@ -122,10 +131,9 @@ object Scheduler {
         }
 
       case TrafficDataFetched(reviews, traffic) =>
+        logger.info(s"✓ Step 2/5 complete: Retrieved traffic data for ${traffic.size} domains")
 
-        context.log.info(s"✓ Step 2/5 complete: Retrieved traffic data for ${traffic.size} domains")
-
-        context.log.info("Step 3/5: Processing reviews for sentiment analysis...")
+        logger.info("Step 3/5: Processing reviews for sentiment analysis...")
 
         val processedReviewsAdapter: ActorRef[List[TrustpilotReview]] =
           context.messageAdapter(processedReviews => ReviewsProcessed(processedReviews, traffic))
@@ -135,21 +143,19 @@ object Scheduler {
         Behaviors.same
 
       case ReviewsProcessed(reviews, traffic) =>
-
         val reviewsWithSentiment = reviews.count(_.sentimentScore.isDefined)
-        context.log.info(s"✓ Step 3/5 complete: Processed sentiment for $reviewsWithSentiment reviews")
+        logger.info(s"✓ Step 3/5 complete: Processed sentiment for $reviewsWithSentiment reviews")
 
         dataStore ! DomainDataStore.AddReviews(reviews)
         dataStore ! DomainDataStore.AddTrafficData(traffic)
 
-        context.log.info("Step 4/5: Calculating domain rankings...")
+        logger.info("Step 4/5: Calculating domain rankings...")
         val summaries = createDomainSummaries(reviews, traffic)
 
         if (summaries.isEmpty) {
-          context.log.warn("No valid domain summaries created! Skipping ranking.")
+          logger.warn("No valid domain summaries created! Skipping ranking.")
           Behaviors.same
         } else {
-
           val rankedSummariesAdapter: ActorRef[List[DomainSummary]] =
             context.messageAdapter(RankingComplete.apply)
 
@@ -158,10 +164,9 @@ object Scheduler {
         }
 
       case RankingComplete(summaries) =>
+        logger.info(s"✓ Step 4/5 complete: Ranked ${summaries.size} domains")
 
-        context.log.info(s"✓ Step 4/5 complete: Ranked ${summaries.size} domains")
-
-        context.log.info("Step 5/5: Storing data in persistent storage...")
+        logger.info("Step 5/5: Storing data in persistent storage...")
 
         val dataStoreCompleteAdapter: ActorRef[List[DomainSummary]] =
           context.messageAdapter(DataStoreComplete.apply)
@@ -171,25 +176,16 @@ object Scheduler {
         Behaviors.same
 
       case DataStoreComplete(summaries) =>
+        logger.info(s"✓ Step 5/5 complete: Stored data for ${summaries.size} domains")
 
-        context.log.info(s"✓ Step 5/5 complete: Stored data for ${summaries.size} domains")
-
-        logRankedDomains(context, summaries)
-        context.log.info("===== DOMAIN RANKING CYCLE COMPLETED =====\n")
+        logRankedDomains(summaries)
+        logger.info("===== DOMAIN RANKING CYCLE COMPLETED =====\n")
 
         Behaviors.same
 
       case ResetRecentReviewCounts =>
-        context.log.info("Resetting recent review counts in data store.")
+        logger.info("Resetting recent review counts in data store.")
         dataStore ! DomainDataStore.ClearRecentCounts
-        Behaviors.same
-
-      case ScheduleFetchAndRank =>
-
-        Behaviors.same
-
-      case ScheduleResetReviews =>
-
         Behaviors.same
     }
   }
@@ -198,20 +194,19 @@ object Scheduler {
                                      reviews: List[TrustpilotReview],
                                      trafficData: List[DomainTraffic]
                                    ): List[DomainSummary] = {
+    logger.debug(s"Creating domain summaries from ${reviews.size} reviews and ${trafficData.size} traffic data points")
 
     val trafficByDomain = trafficData.map(t => (t.domain, t.traffic)).toMap
 
     val reviewsByDomain = reviews.groupBy(_.domain)
 
     reviewsByDomain.map { case (domain, domainReviews) =>
-      // Get the latest review for the domain (only 1, as per requirements)
       val latestReview = domainReviews.maxByOption(_.reviewDate)
-
-      // Count all reviews with sentiment scores
       val recentReviews = domainReviews.filter(_.sentimentScore.isDefined)
 
-      // Calculate sum of sentiment scores for all recent reviews
       val sentimentSumRecent = recentReviews.flatMap(_.sentimentScore).sum
+
+      logger.debug(s"Domain $domain: ${recentReviews.size} recent reviews, sentiment sum: $sentimentSumRecent")
 
       DomainSummary(
         domain = domain,
@@ -219,18 +214,17 @@ object Scheduler {
         recentReviewCount = recentReviews.size,
         totalReviewCount = domainReviews.size,
         traffic = trafficByDomain.get(domain),
-        sentimentSumRecentReviews = sentimentSumRecent,
-        domainAge = 0 // This field is no longer needed for ranking
+        sentimentSumRecentReviews = sentimentSumRecent
       )
     }.toList
   }
 
-  private def logRankedDomains(context: ActorContext[Command], domains: List[DomainSummary]): Unit = {
+  private def logRankedDomains(domains: List[DomainSummary]): Unit = {
     if (domains.isEmpty) {
-      context.log.warn("No ranked domains available.")
+      logger.warn("No ranked domains available.")
     } else {
-      context.log.info("\n📊 TOP RANKED DOMAINS:")
-      context.log.info("===================")
+      logger.info("\n📊 TOP RANKED DOMAINS:")
+      logger.info("===================")
 
       domains.zipWithIndex.foreach { case (domain, index) =>
         val rankInfo = domain.latestReview.map(r =>
@@ -238,13 +232,13 @@ object Scheduler {
             s" - Sentiment: ${r.sentimentScore.getOrElse("N/A")}"
         ).getOrElse("")
 
-        context.log.info(f"${index + 1}. ${domain.domain}%-25s | " +
+        logger.info(f"${index + 1}. ${domain.domain}%-25s | " +
           f"Recent Reviews: ${domain.recentReviewCount}%-2d | " +
           f"Sentiment Sum: ${domain.sentimentSumRecentReviews}%.2f | " +
           f"Total Reviews: ${domain.totalReviewCount}%-3d | " +
           f"Traffic: ${domain.traffic.getOrElse(0L)}%-10d$rankInfo")
       }
-      context.log.info("===================\n")
+      logger.info("===================\n")
     }
   }
 }
